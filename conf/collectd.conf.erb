@@ -1,0 +1,66 @@
+#
+# Config file for collectd(1).
+# Please read collectd.conf(5) for a list of options.
+# http://collectd.org/
+#
+
+##############################################################################
+# Global                                                                     #
+#----------------------------------------------------------------------------#
+# Global settings for the daemon.                                            #
+##############################################################################
+
+Hostname    "<%= serial %>"
+
+##############################################################################
+# Logging                                                                    #
+#----------------------------------------------------------------------------#
+# Plugins which provide logging functions should be loaded first, so log     #
+# messages generated when loading or configuring other plugins can be        #
+# accessed.                                                                  #
+##############################################################################
+
+LoadPlugin syslog
+
+<Plugin syslog>
+	LogLevel info
+</Plugin>
+
+##############################################################################
+# LoadPlugin section                                                         #
+#----------------------------------------------------------------------------#
+# Lines beginning with a single `#' belong to plugins which have been built  #
+# but are disabled by default.                                               #
+#                                                                            #
+# Lines begnning with `##' belong to plugins which have not been built due   #
+# to missing dependencies or because they have been deactivated explicitly.  #
+##############################################################################
+
+LoadPlugin cpu
+LoadPlugin df
+LoadPlugin disk
+LoadPlugin interface
+LoadPlugin memory
+LoadPlugin network
+LoadPlugin processes
+LoadPlugin users
+LoadPlugin load
+
+##############################################################################
+# Plugin configuration                                                       #
+#----------------------------------------------------------------------------#
+# In this section configuration stubs for each plugin are provided. A desc-  #
+# ription of those options is available in the collectd.conf(5) manual page. #
+##############################################################################
+
+
+<Plugin network>
+#	# client setup:
+	Server "demo.openescalar.org" "25826"
+	TimeToLive 128
+	MaxPacketSize 1024
+	CacheFlush 1800
+</Plugin>
+
+Include "/etc/collectd.d"
+

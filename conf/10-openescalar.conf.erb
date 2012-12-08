@@ -1,0 +1,24 @@
+$LocalHostName <%= serial %>
+local5.* /var/log/amun-client
+
+$ModLoad imfile
+$InputFileName /var/log/amun-client
+$InputFileTag amun-client:
+$InputFileStateFile stat-amun-client
+$InputFileSeverity debug
+$InputRunFileMonitor
+
+
+$InputFileName /var/log/messages
+$InputFileTag general-message:
+$InputFileStateFile stat-messages
+$InputFileSeverity debug
+$InputRunFileMonitor
+
+$InputFilePollInterval 10 #Polls every 10 seconds for updates
+
+if $programname == 'amun-client' then @demo.openescalar.org:514
+& ~
+if $programname == 'general-message' then @demo.openescalar.org:514
+& ~
+
