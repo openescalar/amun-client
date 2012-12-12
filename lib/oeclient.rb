@@ -29,6 +29,7 @@ require 'time'
 require 'syslog'
 require 'securerandom'
 require 'erb'
+require 'fileutils'
 
 class Oeclient
 
@@ -79,6 +80,17 @@ private
         log("AmunClient - Connected to queue server")
       rescue
         log("AmunClient - Error while connecting to queue server")
+      end
+      if not File.exists?('/opt/openescalar/amun-client/conf/reboot')
+        p = Hash.new
+        p["server"] = @serial
+        p["action"] = "build"
+        p["key"]    = @config["key"]
+        p["location"] = @config["location"]
+        log("AmunClient - Requesting buildscript")
+        q = encrypt(p,@config["secret"])
+        builder(q)
+        FileUtils.touch("/opt/openescalar/amun-client/conf/reboot")
       end
       while @loop
         begin
@@ -241,6 +253,13 @@ private
     path = "/pingme?#{query}"
     resp = sock.get(path)
   end
+
+  def builder(query)
+    sock = Net::HTTP.new(@config["oeapiserver"],@config["oeapiport"])
+    path = "/builder?#{query}"
+    resp = sock.get(path)
+  end
+
 
   def executeTask(resp,ident,meta)
     type = "script"

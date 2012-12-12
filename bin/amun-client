@@ -91,12 +91,16 @@ def setupClient
     when "eucalyptus"
        serial = %[curl http://169.254.169.254/latest/meta-data/instance-id/]
     else
-       serial = %x[cat /etc/serial]
+       serial = %x[cat /etc/serial] if File.exists?('/etc/serial')
   end
-  File.open("/etc/rsyslog.d/10-openescalar.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/conf/10-openescalar.conf.erb").read, nil, "%").result(binding))}
-  File.open("/etc/collectd.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/conf/collectd.conf.erb").read, nil, "%").result(binding))}
-  %x[/etc/init.d/rsyslogd restart]
-  %x[/etc/init.d/collectd restart]
+  if serial
+    File.open("/etc/rsyslog.d/10-openescalar.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/conf/10-openescalar.conf.erb").read, nil, "%").result(binding))}
+    File.open("/etc/collectd.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/conf/collectd.conf.erb").read, nil, "%").result(binding))}
+    %x[/etc/init.d/rsyslogd restart]
+    %x[/etc/init.d/collectd restart]
+  else
+    exit 1
+  end
 end
 
 case ARGV[0]
