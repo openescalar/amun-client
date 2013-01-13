@@ -85,11 +85,11 @@ def setupClient
   config = YAML.load_file("/opt/openescalar/amun-client/conf/client.conf")["client"]
   case config["location"].to_s
     when "aws"
-       serial = %[curl http://169.254.169.254/latest/meta-data/instance-id/]
+       serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/]
     when "openstack"
-       serial = %[curl http://169.254.169.254/latest/meta-data/instance-id/]
+       serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/].gsub(/i\-/,"").to_i(16)
     when "eucalyptus"
-       serial = %[curl http://169.254.169.254/latest/meta-data/instance-id/]
+       serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/]
     else
        serial = %x[cat /etc/serial] if File.exists?('/etc/serial')
   end

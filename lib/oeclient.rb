@@ -107,6 +107,7 @@ private
             if content["server"] == @serial
 	      s			= @config["secret"]
 	      m			= ""
+
 	      #### GET META
               if not content["metadata"].nil?
                  log("AmunClient - Task will be executed with metadata")
@@ -133,6 +134,7 @@ private
                 log("AmunClient - Requesting metadata to Api server")
 		m = getMeta(q)
               end
+
 	      ### GET TASK
               p = Hash.new
               p["server"] 	= @serial
@@ -153,6 +155,7 @@ private
               q = encrypt(p,s)
               log("AmunClient - Updating Status Event")
               queryTask(q)
+
             else
               log("AmunClient - Message doesnt match server serial")
             end
@@ -193,14 +196,15 @@ private
   def getSerial(loc)
     case loc
       when "ec2"
-         queryURL("169.254.169.254",80,"/latest/meta-data/instance-id")
+         queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
       when "rackspace"
          f = YAML.load_file("/etc/serial")
          f["serial"]
       when "openstack"
-         queryURL("169.254.169.254",80,"/latest/meta-data/instance-id")
+         ser = queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
+         ser.gsub(/i\-/,"").to_i(16).to_s
       when "eucalyptus"
-         queryURL("169.254.169.254",80,"/latest/meta-data/instance-id")
+         queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
       else 
          f = YAML.load_file("/etc/serial")
          f["serial"]
