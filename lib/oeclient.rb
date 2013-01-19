@@ -70,6 +70,25 @@ class Oeclient
     end
   end
 
+  def self.GetSerial(loc)
+    case loc
+      when "ec2"
+         queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
+      when "rackspace"
+         f = YAML.load_file("/etc/serial")
+         f["serial"]
+      when "openstack"
+         ser = queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
+         ser.gsub(/i\-/,"").to_i(16).to_s
+      when "eucalyptus"
+         queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
+      else
+         f = YAML.load_file("/etc/serial")
+         f["serial"]
+    end
+  end
+
+
 private 
 
   def mainListen

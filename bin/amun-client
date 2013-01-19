@@ -85,19 +85,30 @@ def setupClient
   config = YAML.load_file("/opt/openescalar/amun-client/conf/client.conf")["client"]
   case config["location"].to_s
     when "aws"
-       serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/]
+       serial = Oeclient.GetSerial("aws")
+       #serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/]
     when "openstack"
-       serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/].gsub(/i\-/,"").to_i(16)
+       serial = Oeclient.GetSerial("openstack")
+       #serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/].gsub(/i\-/,"").to_i(16)
     when "eucalyptus"
-       serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/]
+       serial = Oeclient.GetSerial("eucalyptus")
+       #serial = %x[curl http://169.254.169.254/latest/meta-data/instance-id/]
     else
        serial = %x[cat /etc/serial] if File.exists?('/etc/serial')
   end
   if serial
-    File.open("/etc/rsyslog.d/10-openescalar.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/conf/10-openescalar.conf.erb").read, nil, "%").result(binding))}
-    File.open("/etc/collectd.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/conf/collectd.conf.erb").read, nil, "%").result(binding))}
-    %x[/etc/init.d/rsyslogd restart]
-    %x[/etc/init.d/collectd restart]
+    begin
+      File.open("/etc/rsyslog.d/10-openescalar.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/conf/10-openescalar.conf.erb").read, nil, "%").result(binding))}
+      File.open("/etc/collectd.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/conf/collectd.conf.erb").read, nil, "%").result(binding))}
+      if File.exists?("/etc/init.d/rsyslogd")
+        %x[/etc/init.d/rsyslogd restart]
+      else
+        %x[/etc/init.d/rsyslog restart]
+      end
+      %x[/etc/init.d/collectd restart]
+    rescue => e
+      puts e.inspect.to_s
+    end
   else
     exit 1
   end
@@ -111,8 +122,12 @@ case ARGV[0]
     stopClient
   when "setup"
     setupClient
+  when "restart"
+    stopClient
+    sleep 10
+    startClient
   else
-    puts "Usage: amun-client <start|stop>"
+    puts "Usage: amun-client <start|stop|restart|setup>"
 end
 
 
