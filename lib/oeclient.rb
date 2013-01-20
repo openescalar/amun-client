@@ -123,7 +123,7 @@ private
           content = YAML.load(msg.body)
           if not content.nil?
             log("AmunClient - Got task " + content["task"] )
-            if content["server"] == @serial
+            if content["server"].to_s == @serial.to_s
 	      s			= @config["secret"]
 	      m			= ""
 
@@ -182,7 +182,7 @@ private
             log("AmunClient - No messages for this server")
           end 
           if not c.client_ack?(msg)
-            c.ack(msg.headers["message-id"])
+            c.ack(msg.headers["message-id"]) if content["server"].to_s == @serial.to_s
           end
         end
       end
@@ -231,6 +231,16 @@ private
   end
 
   def queryUrl(host,port,path)
+    begin
+      sock = Net::HTTP.new(host,port)
+      resp = sock.get(path)
+      resp.body
+    rescue
+      log("AmunClient - Error while connecting to Api server")
+    end
+  end
+
+  def self.queryUrl(host,port,path)
     begin
       sock = Net::HTTP.new(host,port)
       resp = sock.get(path)
