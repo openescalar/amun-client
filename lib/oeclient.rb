@@ -31,31 +31,225 @@ require 'securerandom'
 require 'erb'
 require 'fileutils'
 
+module Olb
+end
+
+module Ovpn
+end
+
+module Oclient
+
+   def self.build
+      if not File.exists?('/opt/openescalar/amun-client/conf/reboot')
+        p = Hash.new
+        p["server"] = Aconfig::serial
+        p["action"] = "build"
+        p["key"]    = Aconfig::config["key"]
+        p["location"] = Aconfig::config["location"]
+        Alog::log("AmunClient - Requesting buildscript")
+        q = Aencrypt::encrypt(p,Aconfig::config["secret"])
+        Aconnect::queryUrl(Aconfig::config["oeapiserver"], Aconfig::config["oeapiport"],q,:builder)
+        FileUtils.touch("/opt/openescalar/amun-client/conf/reboot")
+      end
+    end
+
+    def self.metadata(content,serial,config)
+        if not content["metadata"].nil?
+           Alog::log("AmunClient - Task will be executed with metadata")
+        else
+           Alog::log("AmunClient - Task will be executed without metadata")
+        end
+        if not content["metadata"].nil?
+	   p = Hash.new
+           p["server"] 		= serial
+           p["action"]       	= "download"
+	   p["key"]		= config["key"]
+	   p["location"]	= config["location"]
+           case content["metadata"].to_s
+	      when "deployment"
+		 p["type"]		= "deployment"
+                 p["deployment"]	= content["deployment"]
+                 Alog::log("AmunClient - Task will require deployment metadata")
+	      when "role"
+		 p["type"]		= "role"
+                 p["role"]		= content["role"]
+                 Alog::log("AmunClient - Task will require role metadata")
+           end
+           q = Aencrypt::encrypt(p,s)
+           Alog::log("AmunClient - Requesting metadata to Api server")
+	   Aconnect::queryUrl(config["oeapiserver"],config["oeapiport"],q,:getmeta)
+        end
+    end
+
+    def self.task(m,serial,config,content)
+        p = Hash.new
+        p["server"]	= serial
+        p["action"]     = "gettask"
+        p["task"]	= content["task"]
+        p["key"]	= config["key"]
+        p["location"]	= config["location"]
+        q = Aencrypt::encrypt(p,s)
+        Alog::log("AmunClient - Requesting task from to Api server")
+        r = Aconnect::queryUrl(q,:querytask)
+        p = Hash.new
+        p["action"]	= "updatetask"
+        p["key"]	= config["key"]
+        p["ident"]      = content["ident"]
+        Alog::log("AmunClient - Executing task " + content["task"])
+        p["code"], p["output"] = self.executeTask(r,p["ident"],m)
+        Alog::log("AmunClient - Task execution finished")
+        q = Aencrypt::encrypt(p,s)
+        Alog::log("AmunClient - Updating Status Event")
+        Aconnect::queryUrl(q,:querytask)
+    end
+
+    def self.executeTask(resp,ident,meta)
+      type = "script"
+      if resp.code.to_i == 200
+        if not File.directory? "/tmp/amun-client"
+          Dir::mkdir("/tmp/amun-client")
+        end
+        metafile = "/tmp/amun-client/meta-" + ident
+        open(metafile,"w") { |f|
+          f.write(CGI.unescapeHTML(meta.body).gsub!("\015",""))
+        }
+        Alog::log("AmunClient - Created metadata file")
+        tfile = "/tmp/amun-client/" + ident
+        open(tfile,"w") { |f|
+          f.write(CGI.unescapeHTML(resp.body).gsub!("\015",""))
+        }
+        Alog::log("AmunClient - Created task file")
+        File.chmod(0755,metafile)
+        File.chmod(0755,tfile)
+        output = ""
+        pid = ""
+        ecode = ""
+        case type
+          when "puppet"
+             output = %x[puppet apply #{tfile} 2>&1]
+             pid = $?.pid
+             ecode = $?.exitstatus
+          when "chef"
+             output = %x[chef-solo #{tfile} 2>&1]
+             pid = $?.pid
+             ecode = $?.exitstatus
+          when "script"
+             output = %x[source #{metafile} ; #{tfile} 2>&1]
+             pid = $?.pid
+             ecode = $?.exitstatus
+          else
+             output = %x[source #{metafile} ; #{tfile} 2>&1]
+             pid = $?.pid
+             ecode = $?.exitstatus
+        end
+        return ecode, output
+      end
+    end
+end
+
+module Aconnect
+  def self.queryUrl(host,port,query,action)
+    case action
+       when :pingme
+          path = "/pingme?#{query}"
+       when :querytask
+          path = "/task?#{query}"
+       when :getmeta
+          path = "/metadata?#{query}"
+       when :builder
+          path = "/builder?#{query}"
+       when :vote
+          path = "/escalar?#{query}"
+       else 
+          path = query
+    end
+    begin
+      sock = Net::HTTP.new(host,port)
+      resp = sock.get(path)
+      resp.body
+    rescue
+      Alog::log("AmunClient - Error while connecting to Api server")
+    end
+  end
+end
+
+module Aencrypt
+  def self.encrypt(parameters,secret)
+    parameters["time"] 		= Time.now.utc.iso8601
+    canonical_querystring 	= parameters.sort.collect { |key,value| [URI.escape(key.to_s, Regexp.new("[^#{URI::PATTERN::UNRESERVED}]")), URI.escape(value.to_s, Regexp.new("[^#{URI::PATTERN::UNRESERVED}]"))].join('=') }.join('&')
+    hmac 			= OpenSSL::HMAC.new(secret,'sha256')
+    hmac.update(canonical_querystring)
+    signature 			= Base64.encode64(hmac.digest).chomp
+    parameters['signature'] 	= signature
+    querystring 		= parameters.sort.collect { |key,value| [URI.escape(key.to_s, Regexp.new("[^#{URI::PATTERN::UNRESERVED}]")), URI.escape(value.to_s, Regexp.new("[^#{URI::PATTERN::UNRESERVED}]"))].join('=') }.join('&')
+    querystring
+  end
+end
+
+module Alog
+  def self.log(message)
+    Syslog.open($0, Syslog::LOG_PID | Syslog::LOG_CONS) { |s| s.warning message }
+  end
+end
+
+module Aconfig
+
+  @@conf = Config.new.get
+  @@ser = Config.new.serial(@@conf["location"])
+
+  def self.config
+      @@conf
+  end
+  def self.serial
+      @@ser
+  end
+
+  class Config
+    def get
+      begin
+        YAML.load_file('/opt/openescalar/amun-client/conf/client.conf')["client"]
+      rescue
+        Alog::log("Error reading client configuration file")
+      end
+    end
+
+    def serial(loc)
+      case loc
+        when "ec2"
+           Aconnect::queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id",:none)
+        when "rackspace"
+           f = YAML.load_file("/etc/serial")
+           f["serial"]
+        when "openstack"
+           ser = Aconnect::queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id",:none)
+           ser.gsub(/i\-/,"").to_i(16).to_s
+        when "eucalyptus"
+           Aconnect::queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id",:none)
+        else
+           f = YAML.load_file("/etc/serial")
+           f["serial"]
+        end
+    end
+  end
+end
+
 class Oeclient
 
   def initialize
     @loop = true
     @queue = "/topic/openescalar"
-    begin
-      @config = YAML.load_file('/opt/openescalar/amun-client/conf/client.conf')["client"]
-    rescue
-      log("Error reading client configuration file")
-    end
-  end
-
-  def log(message)
-    Syslog.open($0, Syslog::LOG_PID | Syslog::LOG_CONS) { |s| s.warning message }
+    @config = Aconfig::config
   end
 
   def start
     begin
       @loop = true
-      @serial = getSerial(@config["location"])
+      @serial = Aconfig::serial(@config["location"])
       mainListen
       pinger
-      log("AmunClient - STARTING")
+      Alog::log("AmunClient - STARTING")
     rescue
-      log("AmunClient - Error while connecting to OpenEscalar Queue Server")
+      Alog::log("AmunClient - Error while connecting to OpenEscalar Queue Server")
     end
   end
 
@@ -64,29 +258,12 @@ class Oeclient
     begin
       @t.kill
       @t2.kill
-      log("AmunClient - SHUTDOWN")
+      Alog::log("AmunClient - SHUTDOWN")
     rescue
-      log("AmunClient - Error while stopping client")
+      Alog::log("AmunClient - Error while stopping client")
     end
   end
 
-  def self.GetSerial(loc)
-    case loc
-      when "ec2"
-         queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
-      when "rackspace"
-         f = YAML.load_file("/etc/serial")
-         f["serial"]
-      when "openstack"
-         ser = queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
-         ser.gsub(/i\-/,"").to_i(16).to_s
-      when "eucalyptus"
-         queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
-      else
-         f = YAML.load_file("/etc/serial")
-         f["serial"]
-    end
-  end
 
 
 private 
@@ -96,85 +273,27 @@ private
       begin
         c = Stomp::Connection.new(login = @config["oequser"], password = @config["oeqpass"], host = @config["oeserver"], port = @config["oeport"], reliable = false, reconnect_delay=5 )
         c.subscribe @queue, { :ack => :client }
-        log("AmunClient - Connected to queue server")
+        Alog::log("AmunClient - Connected to queue server")
       rescue
-        log("AmunClient - Error while connecting to queue server")
+        Alog::log("AmunClient - Error while connecting to queue server")
       end
-      if not File.exists?('/opt/openescalar/amun-client/conf/reboot')
-        p = Hash.new
-        p["server"] = @serial
-        p["action"] = "build"
-        p["key"]    = @config["key"]
-        p["location"] = @config["location"]
-        log("AmunClient - Requesting buildscript")
-        q = encrypt(p,@config["secret"])
-        builder(q)
-        FileUtils.touch("/opt/openescalar/amun-client/conf/reboot")
-      end
+      Oeclient::build
       while @loop
         begin
           msg = c.receive
-          log("AmunClient - received msg for #{@serial}")
+          Alog::log("AmunClient - received msg for #{@serial}")
         rescue
-          log("AmunClient - Unable to receive msg from queue")
+          Alog::log("AmunClient - Unable to receive msg from queue")
         end
         sleep 1
         if msg
           content = YAML.load(msg.body)
           if not content.nil?
-            log("AmunClient - Got task " + content["task"] )
+            Alog::log("AmunClient - Got task " + content["task"] )
             if content["server"].to_s == @serial.to_s
-	      s			= @config["secret"]
-	      m			= ""
-
-	      #### GET META
-              if not content["metadata"].nil?
-                 log("AmunClient - Task will be executed with metadata")
-              else
-                 log("AmunClient - Task will be executed without metadata")
-              end
-              if not content["metadata"].nil?
-	        p = Hash.new
-                p["server"] 		= @serial
-                p["action"]       	= "download"
-	        p["key"]		= @config["key"]
-	        p["location"]		= @config["location"]
-                case content["metadata"].to_s
-		  when "deployment"
-		    p["type"]		= "deployment"
-                    p["deployment"]	= content["deployment"]
-                    log("AmunClient - Task will require deployment metadata")
-		  when "role"
-		    p["type"]		= "role"
-                    p["role"]		= content["role"]
-                    log("AmunClient - Task will require role metadata")
-                end
-                q = encrypt(p,s)
-                log("AmunClient - Requesting metadata to Api server")
-		m = getMeta(q)
-              end
-
-	      ### GET TASK
-              p = Hash.new
-              p["server"] 	= @serial
-              p["action"]       = "gettask"
-	      p["task"]		= content["task"]
-	      p["key"]		= @config["key"]
-	      p["location"]	= @config["location"]
-	      q = encrypt(p,s)
-	      log("AmunClient - Requesting task from to Api server")
-              r = queryTask(q)
-	      p = Hash.new
-              p["action"]	= "updatetask"
-	      p["key"]		= @config["key"]
-              p["ident"]        = content["ident"]
-              log("AmunClient - Executing task " + content["task"])
-              p["code"], p["output"] = executeTask(r,p["ident"],m)
-              log("AmunClient - Task execution finished")
-              q = encrypt(p,s)
-              log("AmunClient - Updating Status Event")
-              queryTask(q)
-
+	      s	= @config["secret"]
+	      m	= Oclient::metadata(content,@serial,@config)
+	      Oclient::task(m,@serial,@config,content)
             else
               log("AmunClient - Message doesnt match server serial")
             end
@@ -205,136 +324,11 @@ private
         begin
             pingMe(q)
         rescue
-            log("AmunClient - Error while pinging OpenEscalar")
+            Alog::log("AmunClient - Error while pinging OpenEscalar")
         end
         sleep 300
       end
     end  
-  end
-
-  def getSerial(loc)
-    case loc
-      when "ec2"
-         queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
-      when "rackspace"
-         f = YAML.load_file("/etc/serial")
-         f["serial"]
-      when "openstack"
-         ser = queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
-         ser.gsub(/i\-/,"").to_i(16).to_s
-      when "eucalyptus"
-         queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id")
-      else 
-         f = YAML.load_file("/etc/serial")
-         f["serial"]
-    end
-  end
-
-  def queryUrl(host,port,path)
-    begin
-      sock = Net::HTTP.new(host,port)
-      resp = sock.get(path)
-      resp.body
-    rescue
-      log("AmunClient - Error while connecting to Api server")
-    end
-  end
-
-  def self.queryUrl(host,port,path)
-    begin
-      sock = Net::HTTP.new(host,port)
-      resp = sock.get(path)
-      resp.body
-    rescue
-      log("AmunClient - Error while connecting to Api server")
-    end
-  end
-
-  def encrypt(parameters,secret)
-    parameters["time"] 		= Time.now.utc.iso8601
-    canonical_querystring = parameters.sort.collect { |key,value| [URI.escape(key.to_s, Regexp.new("[^#{URI::PATTERN::UNRESERVED}]")), URI.escape(value.to_s, Regexp.new("[^#{URI::PATTERN::UNRESERVED}]"))].join('=') }.join('&')
-    hmac = OpenSSL::HMAC.new(secret,'sha256')
-    hmac.update(canonical_querystring)
-    signature = Base64.encode64(hmac.digest).chomp
-    parameters['signature'] = signature
-    querystring = parameters.sort.collect { |key,value| [URI.escape(key.to_s, Regexp.new("[^#{URI::PATTERN::UNRESERVED}]")), URI.escape(value.to_s, Regexp.new("[^#{URI::PATTERN::UNRESERVED}]"))].join('=') }.join('&')
-    querystring
-  end
-
-  def queryTask(query)
-    sock = Net::HTTP.new(@config["oeapiserver"],@config["oeapiport"])
-    path = "/task?#{query}"
-    resp = sock.get(path)
-    resp
-  end
-
-  def votescale(query)
-    sock = Net::HTTP.new(@config["oeapiserver"],@config["oeapiport"])
-    path = "/escalar?#{query}"
-    resp = sock.get(path)
-  end
-
-  def getMeta(query)
-    sock = Net::HTTP.new(@config["oeapiserver"],@config["oeapiport"])
-    path = "/metadata?#{query}"
-    resp = sock.get(path)
-    resp
-  end
-
-  def pingMe(query)
-    sock = Net::HTTP.new(@config["oeapiserver"],@config["oeapiport"])
-    path = "/pingme?#{query}"
-    resp = sock.get(path)
-  end
-
-  def builder(query)
-    sock = Net::HTTP.new(@config["oeapiserver"],@config["oeapiport"])
-    path = "/builder?#{query}"
-    resp = sock.get(path)
-  end
-
-
-  def executeTask(resp,ident,meta)
-    type = "script"
-    if resp.code.to_i == 200
-      if not File.directory? "/tmp/amun-client"
-        Dir::mkdir("/tmp/amun-client")
-      end
-      metafile = "/tmp/amun-client/meta-" + ident
-      open(metafile,"w") { |f|
-        f.write(CGI.unescapeHTML(meta.body).gsub!("\015",""))
-      }
-      log("AmunClient - Created metadata file")
-      tfile = "/tmp/amun-client/" + ident
-      open(tfile,"w") { |f|
-        f.write(CGI.unescapeHTML(resp.body).gsub!("\015",""))
-      }
-      log("AmunClient - Created task file")
-      File.chmod(0755,metafile)
-      File.chmod(0755,tfile)
-      output = ""
-      pid = ""
-      ecode = ""
-      case type
-        when "puppet"
-           output = %x[puppet apply #{tfile} 2>&1]
-           pid = $?.pid
-           ecode = $?.exitstatus
-        when "chef"
-           output = %x[chef-solo #{tfile} 2>&1]
-           pid = $?.pid
-           ecode = $?.exitstatus
-        when "script"
-           output = %x[source #{metafile} ; #{tfile} 2>&1]
-           pid = $?.pid
-           ecode = $?.exitstatus
-        else
-           output = %x[source #{metafile} ; #{tfile} 2>&1]
-           pid = $?.pid
-           ecode = $?.exitstatus
-      end
-      return ecode, output
-    end
   end
 
 end
