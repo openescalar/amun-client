@@ -72,7 +72,7 @@ module Olb
   def self.config
     begin
       File.open("/etc/haproxy/haproxy.cfg",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/lib/olbdef.erb").read, nil, "%").result(binding))}
-      File.open("/etc/nginx/conf.d/ssl.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/lib/olbcert.erb").read, nil, "%").result(binding))}
+      File.open("/etc/nginx/conf.d/ssl.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/lib/olbcer.erb").read, nil, "%").result(binding))}
       @@confok = true
     rescue 
       @@confok = false
@@ -114,23 +114,30 @@ end
 
 module Ovpn
 
+  @@confok = true
+
   def self.task(m,serial,config,content)
         p = Hash.new
         p["server"]	= serial
-        p["action"]     = "gettask"
-        p["task"]	= content["task"]
+        p["action"]     = "get"
         p["key"]	= config["key"]
         p["location"]	= config["location"]
         q = Aencrypt::encrypt(p,config["secret"])
-        Alog::log("AmunClient - Requesting task from to Api server")
-        r = Aconnect::queryUrl(q,:querytask)
+        Alog::log("OVPN - Requesting task from to Api server")
+        r = Aconnect::queryUrl(q,:ovpn)
         p = Hash.new
-        p["action"]	= "updatetask"
+        p["action"]	= "update"
         p["key"]	= config["key"]
         p["ident"]      = content["ident"]
-        Alog::log("AmunClient - Executing task " + content["task"])
-        p["code"], p["output"] = self.executeTask(r,p["ident"],m)
-        Alog::log("AmunClient - Task execution finished")
+        Alog::log("OVPN - Executing task " + content["task"])
+        case content["action"]
+           when "connect"
+              self.config
+              p["code"], p["output"] = self.connect
+           when "disconnect"
+              self.disconnect
+        end
+        Alog::log("OVPN - Task execution finished")
         q = Aencrypt::encrypt(p,config["secret"])
   end
 
@@ -141,13 +148,34 @@ module Ovpn
   def self.build
     
   end
+
+  def self.config
+    begin
+      File.open("/etc/openvpn/openvpn.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/lib/ovpndef.erb").read, nil, "%").result(binding))}
+      @@confok = true
+    rescue 
+      @@confok = false
+      Alog::log("OVPN - Error while creating configuration files")
+    end
+  end
  
   def self.connect
-    
+    begin
+      raise if not @@confok
+      %x[/etc/init.d/openvpn start]
+      0, "Connected"
+    rescue
+      Alog::log("OVPN - Error while connecting to vpc")
+      1, "Not connected"
+    end
   end
 
   def self.disconnect
-    
+    begin
+      %x[/etc/init.d/openvpn stop]
+    rescue
+      Alog::log("OVPN - Error while disconnecting from vpc")
+    end
   end
 
 end
