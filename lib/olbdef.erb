@@ -1,0 +1,47 @@
+global
+        log 127.0.0.1   local0
+        log 127.0.0.1   local1 notice
+        #log loghost    local0 info
+        maxconn 4096
+        #chroot /usr/share/haproxy
+        user haproxy
+        group haproxy
+        daemon
+        #debug
+        #quiet
+
+defaults
+        log     global
+        mode    http
+        option  httplog
+        option  dontlognull
+        retries 3
+        option redispatch
+        maxconn 2000
+        contimeout      5000
+        clitimeout      50000
+        srvtimeout      50000
+
+
+<% entries.vip.each do |v| %>
+
+listen  <%= v.name -%> 0.0.0.0:<%= v.port -%>
+        <% if v.http -%>
+          <% if v.cookie -%>
+        cookie  <%= v.cookie -%> prefix
+          <% end -%>
+        mode http
+        option httpclose
+        option forwardfor
+          <% if v.check -%>
+        option httpchk <% v.check[:path] -%> 
+          <% end -%>
+        <% else -%>
+        mode tcp
+        <% end -%>
+        balance roundrobin
+        <% v.servers.each do |s| -%>
+        server app<%= s.ip -%> <%= s.ip -%>:<%= s.port -%> <% if v.cookie -%>cookie app<%= s.ip -%> check inter 2000 rise 2 fall 5
+        <% end -%>
+
+<% end %>

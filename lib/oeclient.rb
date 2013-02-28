@@ -32,9 +32,124 @@ require 'erb'
 require 'fileutils'
 
 module Olb
+
+  @@confok = true
+  
+  def self.task(m,serial,config,content)
+        p = Hash.new
+        p["olb"]	= serial
+        p["action"]     = "get"
+        p["key"]	= config["key"]
+        p["location"]	= config["location"]
+        q = Aencrypt::encrypt(p,config["secret"])
+        Alog::log("OLB - Requesting server info from to Api server")
+        r = Aconnect::queryUrl(q,:olb)
+        p = Hash.new
+        p["action"]	= "update"
+        p["key"]	= config["key"]
+        p["ident"]      = content["ident"]
+        Alog::log("OLB - Executing " + content["action"])
+	self.config
+        p["code"], p["output"] = self.reload
+        Alog::log("OLB - Task execution finished")
+        q = Aencrypt::encrypt(p,config["secret"])
+        Aconnect::queryUrl(q,:event)
+  end
+
+  def self.metadata(content,serial,config)
+    ""
+  end
+
+  def self.build
+    begin
+      %x[]
+      self.start
+    rescue
+      Alog::log("OLB - Couldn't install OLB packages")
+    end
+  end
+
+  def self.config
+    begin
+      File.open("/etc/haproxy/haproxy.cfg",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/lib/olbdef.erb").read, nil, "%").result(binding))}
+      File.open("/etc/nginx/conf.d/ssl.conf",'w') {|f| f.write(ERB.new(File.new("/opt/openescalar/amun-client/lib/olbcert.erb").read, nil, "%").result(binding))}
+      @@confok = true
+    rescue 
+      @@confok = false
+      Alog::log("OLB - Error while creating configuration files")
+    end
+  end
+
+  def self.start
+    begin
+      %x[/etc/init.d/nginx start]
+      %x[/etc/init.d/haproxy start]
+    rescue
+      Alog::log("OLB - Error starting OLB")
+    end
+  end
+
+  def self.stop
+    begin
+      %x[/etc/init.d/haproxy stop]
+      %x[/etc/init.d/nginx stop]
+    rescue
+      Alog::log("OLB - Error stopping OLB")
+    end
+  end
+
+  def self.reload
+    begin
+      raise if not @@confok
+      %x[/etc/init.d/haproxy reload]
+      %x[/etc/init.d/nginx reload]
+      0, "Changes Applied"
+    rescue
+      Alog::log("OLB - Error Reloading OLB")
+      1, "Error while applying changes"
+    end
+  end
+
 end
 
 module Ovpn
+
+  def self.task(m,serial,config,content)
+        p = Hash.new
+        p["server"]	= serial
+        p["action"]     = "gettask"
+        p["task"]	= content["task"]
+        p["key"]	= config["key"]
+        p["location"]	= config["location"]
+        q = Aencrypt::encrypt(p,config["secret"])
+        Alog::log("AmunClient - Requesting task from to Api server")
+        r = Aconnect::queryUrl(q,:querytask)
+        p = Hash.new
+        p["action"]	= "updatetask"
+        p["key"]	= config["key"]
+        p["ident"]      = content["ident"]
+        Alog::log("AmunClient - Executing task " + content["task"])
+        p["code"], p["output"] = self.executeTask(r,p["ident"],m)
+        Alog::log("AmunClient - Task execution finished")
+        q = Aencrypt::encrypt(p,config["secret"])
+  end
+
+  def self.metadata(content,serial,config)
+    ""
+  end
+
+  def self.build
+    
+  end
+ 
+  def self.connect
+    
+  end
+
+  def self.disconnect
+    
+  end
+
 end
 
 module Oclient
@@ -75,7 +190,7 @@ module Oclient
                  p["role"]		= content["role"]
                  Alog::log("AmunClient - Task will require role metadata")
            end
-           q = Aencrypt::encrypt(p,s)
+           q = Aencrypt::encrypt(p,config["secret"])
            Alog::log("AmunClient - Requesting metadata to Api server")
 	   Aconnect::queryUrl(config["oeapiserver"],config["oeapiport"],q,:getmeta)
         end
@@ -88,7 +203,7 @@ module Oclient
         p["task"]	= content["task"]
         p["key"]	= config["key"]
         p["location"]	= config["location"]
-        q = Aencrypt::encrypt(p,s)
+        q = Aencrypt::encrypt(p,config["secret"])
         Alog::log("AmunClient - Requesting task from to Api server")
         r = Aconnect::queryUrl(q,:querytask)
         p = Hash.new
@@ -98,7 +213,7 @@ module Oclient
         Alog::log("AmunClient - Executing task " + content["task"])
         p["code"], p["output"] = self.executeTask(r,p["ident"],m)
         Alog::log("AmunClient - Task execution finished")
-        q = Aencrypt::encrypt(p,s)
+        q = Aencrypt::encrypt(p,config["secret"])
         Alog::log("AmunClient - Updating Status Event")
         Aconnect::queryUrl(q,:querytask)
     end
@@ -150,15 +265,21 @@ end
 module Aconnect
   def self.queryUrl(host,port,query,action)
     case action
-       when :pingme
-          path = "/pingme?#{query}"
-       when :querytask
+       when :task
           path = "/task?#{query}"
-       when :getmeta
+       when :ping
+          path = "/ping?#{query}"
+       when :olb
+          path = "/olb?#{query}"
+       when :ovpn
+          path = "/ovpn?#{query}"
+       when :odns
+          path = "/odns?#{query}"
+       when :metadata
           path = "/metadata?#{query}"
-       when :builder
-          path = "/builder?#{query}"
-       when :vote
+       when :event
+          path = "/event?#{query}"
+       when :escalar
           path = "/escalar?#{query}"
        else 
           path = query
@@ -194,17 +315,7 @@ end
 
 module Aconfig
 
-  @@conf = Config.new.get
-  @@ser = Config.new.serial(@@conf["location"])
-
-  def self.config
-      @@conf
-  end
-  def self.serial
-      @@ser
-  end
-
-  class Config
+  class LoadConfig
     def get
       begin
         YAML.load_file('/opt/openescalar/amun-client/conf/client.conf')["client"]
@@ -231,6 +342,17 @@ module Aconfig
         end
     end
   end
+
+  @@conf = LoadConfig.new.get
+  @@ser = LoadConfig.new.serial(@@conf["location"])
+
+  def self.config
+      @@conf
+  end
+  def self.serial
+      @@ser
+  end
+
 end
 
 class Oeclient
@@ -239,12 +361,20 @@ class Oeclient
     @loop = true
     @queue = "/topic/openescalar"
     @config = Aconfig::config
+    case @config["mode"]
+       when "olb"
+         extend Olb
+       when "ovpn"
+         extend Ovpn
+       else 
+         extend Oclient
+    end
   end
 
   def start
     begin
       @loop = true
-      @serial = Aconfig::serial(@config["location"])
+      @serial = Aconfig::serial
       mainListen
       pinger
       Alog::log("AmunClient - STARTING")
@@ -277,7 +407,7 @@ private
       rescue
         Alog::log("AmunClient - Error while connecting to queue server")
       end
-      Oeclient::build
+      self.build
       while @loop
         begin
           msg = c.receive
@@ -291,14 +421,13 @@ private
           if not content.nil?
             Alog::log("AmunClient - Got task " + content["task"] )
             if content["server"].to_s == @serial.to_s
-	      s	= @config["secret"]
-	      m	= Oclient::metadata(content,@serial,@config)
-	      Oclient::task(m,@serial,@config,content)
+	      m	= self.metadata(content,@serial,@config)
+	      self.task(m,@serial,@config,content)
             else
-              log("AmunClient - Message doesnt match server serial")
+              Alog::log("AmunClient - Message doesnt match server serial")
             end
           else
-            log("AmunClient - No messages for this server")
+            Alog::log("AmunClient - No messages for this server")
           end 
           if not c.client_ack?(msg)
             c.ack(msg.headers["message-id"]) if content["server"].to_s == @serial.to_s
@@ -308,7 +437,7 @@ private
       begin
         c.disconnect 
       rescue
-        log("AmunClient - Error while disconnecting from queue server")
+        Alog::log("AmunClient - Error while disconnecting from queue server")
       end
     end
   end
@@ -320,9 +449,9 @@ private
         p["action"]             = "ping"
         p["key"]                = @config["key"]
         p["server"]             = @serial
-        q = encrypt(p,@config["secret"])
+        q = Aencrypt::encrypt(p,@config["secret"])
         begin
-            pingMe(q)
+	    Aconnect::queryUrl(@config["oeapiserver"],@config["oeapiport"],q,:pingme)
         rescue
             Alog::log("AmunClient - Error while pinging OpenEscalar")
         end
