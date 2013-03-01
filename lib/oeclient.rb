@@ -36,24 +36,35 @@ module Olb
   @@confok = true
   
   def self.task(m,serial,config,content)
+
         p = Hash.new
         p["olb"]	= serial
         p["action"]     = "get"
         p["key"]	= config["key"]
         p["location"]	= config["location"]
+
         q = Aencrypt::encrypt(p,config["secret"])
+
         Alog::log("OLB - Requesting server info from to Api server")
-        r = Aconnect::queryUrl(q,:olb)
+
+        r = Aconnect::queryUrl(:query => q,:action => :olb)
+
         p = Hash.new
         p["action"]	= "update"
         p["key"]	= config["key"]
         p["ident"]      = content["ident"]
+
         Alog::log("OLB - Executing " + content["action"])
+
 	self.config
+
         p["code"], p["output"] = self.reload
+
         Alog::log("OLB - Task execution finished")
+
         q = Aencrypt::encrypt(p,config["secret"])
-        Aconnect::queryUrl(q,:event)
+
+        Aconnect::queryUrl(:query => q,:action => :event)
   end
 
   def self.metadata(content,serial,config)
@@ -62,7 +73,7 @@ module Olb
 
   def self.build
     begin
-      %x[]
+      %x[yum install -y nginx haproxy]
       self.start
     rescue
       Alog::log("OLB - Couldn't install OLB packages")
@@ -117,19 +128,26 @@ module Ovpn
   @@confok = true
 
   def self.task(m,serial,config,content)
+
         p = Hash.new
         p["server"]	= serial
         p["action"]     = "get"
         p["key"]	= config["key"]
         p["location"]	= config["location"]
+
         q = Aencrypt::encrypt(p,config["secret"])
+
         Alog::log("OVPN - Requesting task from to Api server")
-        r = Aconnect::queryUrl(q,:ovpn)
+
+        r = Aconnect::queryUrl(:query => q,:action => :ovpn)
+
         p = Hash.new
         p["action"]	= "update"
         p["key"]	= config["key"]
         p["ident"]      = content["ident"]
+
         Alog::log("OVPN - Executing task " + content["task"])
+
         case content["action"]
            when "connect"
               self.config
@@ -137,8 +155,12 @@ module Ovpn
            when "disconnect"
               self.disconnect
         end
+
         Alog::log("OVPN - Task execution finished")
+
         q = Aencrypt::encrypt(p,config["secret"])
+
+        Aconnect::queryUrl(:query => q, :action => :event)
   end
 
   def self.metadata(content,serial,config)
@@ -146,7 +168,12 @@ module Ovpn
   end
 
   def self.build
-    
+    begin
+      %x[yum install -y openvpn]
+      self.start
+    rescue
+      Alog::log("OVPN - Couldn't install OLB packages")
+    end
   end
 
   def self.config
@@ -184,30 +211,39 @@ module Oclient
 
    def self.build
       if not File.exists?('/opt/openescalar/amun-client/conf/reboot')
+
         p = Hash.new
         p["server"] = Aconfig::serial
         p["action"] = "build"
         p["key"]    = Aconfig::config["key"]
         p["location"] = Aconfig::config["location"]
+
         Alog::log("AmunClient - Requesting buildscript")
+
         q = Aencrypt::encrypt(p,Aconfig::config["secret"])
-        Aconnect::queryUrl(Aconfig::config["oeapiserver"], Aconfig::config["oeapiport"],q,:builder)
+
+        Aconnect::queryUrl(:query => q,:action => :task)
+
         FileUtils.touch("/opt/openescalar/amun-client/conf/reboot")
       end
     end
 
     def self.metadata(content,serial,config)
+
         if not content["metadata"].nil?
            Alog::log("AmunClient - Task will be executed with metadata")
         else
            Alog::log("AmunClient - Task will be executed without metadata")
         end
+
         if not content["metadata"].nil?
+
 	   p = Hash.new
            p["server"] 		= serial
            p["action"]       	= "download"
 	   p["key"]		= config["key"]
 	   p["location"]	= config["location"]
+
            case content["metadata"].to_s
 	      when "deployment"
 		 p["type"]		= "deployment"
@@ -218,32 +254,48 @@ module Oclient
                  p["role"]		= content["role"]
                  Alog::log("AmunClient - Task will require role metadata")
            end
+
            q = Aencrypt::encrypt(p,config["secret"])
+
            Alog::log("AmunClient - Requesting metadata to Api server")
-	   Aconnect::queryUrl(config["oeapiserver"],config["oeapiport"],q,:getmeta)
+
+	   Aconnect::queryUrl(:query => q, :action => :meta)
+
         end
     end
 
     def self.task(m,serial,config,content)
+
         p = Hash.new
         p["server"]	= serial
-        p["action"]     = "gettask"
+        p["action"]     = "get"
         p["task"]	= content["task"]
         p["key"]	= config["key"]
         p["location"]	= config["location"]
+
         q = Aencrypt::encrypt(p,config["secret"])
+
         Alog::log("AmunClient - Requesting task from to Api server")
-        r = Aconnect::queryUrl(q,:querytask)
+
+        r = Aconnect::queryUrl(:query => q,:action => :task)
+
         p = Hash.new
-        p["action"]	= "updatetask"
+        p["action"]	= "update"
         p["key"]	= config["key"]
         p["ident"]      = content["ident"]
+
         Alog::log("AmunClient - Executing task " + content["task"])
+
         p["code"], p["output"] = self.executeTask(r,p["ident"],m)
+
         Alog::log("AmunClient - Task execution finished")
+
         q = Aencrypt::encrypt(p,config["secret"])
+
         Alog::log("AmunClient - Updating Status Event")
-        Aconnect::queryUrl(q,:querytask)
+
+        Aconnect::queryUrl(:query => q, :action => :event)
+
     end
 
     def self.executeTask(resp,ident,meta)
@@ -291,27 +343,29 @@ module Oclient
 end
 
 module Aconnect
-  def self.queryUrl(host,port,query,action)
-    case action
+  def self.queryUrl(args) 
+    case args[:action]
        when :task
-          path = "/task?#{query}"
+          path = "/task?#{args[:query]}"
        when :ping
-          path = "/ping?#{query}"
+          path = "/ping?#{args[:query]}"
        when :olb
-          path = "/olb?#{query}"
+          path = "/olb?#{args[:query]}"
        when :ovpn
-          path = "/ovpn?#{query}"
+          path = "/ovpn?#{args[:query]}"
        when :odns
-          path = "/odns?#{query}"
+          path = "/odns?#{args[:query]}"
        when :metadata
-          path = "/metadata?#{query}"
+          path = "/metadata?#{args[:query]}"
        when :event
-          path = "/event?#{query}"
+          path = "/event?#{args[:query]}"
        when :escalar
-          path = "/escalar?#{query}"
+          path = "/escalar?#{args[:query]}"
        else 
-          path = query
+          path = args[:query]
     end
+    args[:host] ? host = args[:host] : host = Aconfig::config["oeapiserver"]
+    args[:port] ? port = args[:port] : host = Aconfig::config["oeapiport"]
     begin
       sock = Net::HTTP.new(host,port)
       resp = sock.get(path)
@@ -355,15 +409,15 @@ module Aconfig
     def serial(loc)
       case loc
         when "ec2"
-           Aconnect::queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id",:none)
+           Aconnect::queryUrl(:host => "169.254.169.254",:port => 80, :query => "/latest/meta-data/instance-id",:action => :none)
         when "rackspace"
            f = YAML.load_file("/etc/serial")
            f["serial"]
         when "openstack"
-           ser = Aconnect::queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id",:none)
+           ser = Aconnect::queryUrl(:host => "169.254.169.254",:port => 80,:query => "/latest/meta-data/instance-id",:action => :none)
            ser.gsub(/i\-/,"").to_i(16).to_s
         when "eucalyptus"
-           Aconnect::queryUrl("169.254.169.254",80,"/latest/meta-data/instance-id",:none)
+           Aconnect::queryUrl(:host => "169.254.169.254",:port => 80,:query => "/latest/meta-data/instance-id",:action => :none)
         else
            f = YAML.load_file("/etc/serial")
            f["serial"]
@@ -479,7 +533,7 @@ private
         p["server"]             = @serial
         q = Aencrypt::encrypt(p,@config["secret"])
         begin
-	    Aconnect::queryUrl(@config["oeapiserver"],@config["oeapiport"],q,:pingme)
+	    Aconnect::queryUrl(:query => q,:action => :ping)
         rescue
             Alog::log("AmunClient - Error while pinging OpenEscalar")
         end
