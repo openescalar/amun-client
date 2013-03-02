@@ -1,0 +1,97 @@
+#!/usr/bin/env ruby
+# oe-horus	OpenEscalar Horus 
+#
+# chkconfig: 2345 98 10
+# description: OpenEscalar Horus Amun Clien provides connectivity and performs scripting steps sent by OpenEscalar framework
+#
+# Copyright 2012 Miguel Zuniga <miguelzuniga@gmail.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at 
+#	
+#	http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software 
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+require '/opt/openescalar/amun-client/lib/horus.rb'
+
+def getPids
+  o = Array.new
+  if File.exists?('/var/run/horusd.pid')
+    File.open('/var/run/horusd.pid','r') do |infile|
+      while (line=infile.gets)
+        begin
+          Process.getpgid(line.to_i)
+          o << line.to_i
+        rescue Errno::ESRCH
+        end
+      end
+     end
+   end
+  return o
+end
+
+def writePids(a)
+  f = File.open('/var/run/horusd.pid','w')
+  a.each do |pido| 
+    f.puts pido.to_s
+  end
+  f.close
+end
+
+def startClient
+  a = Array.new
+  o = getPids
+  $0 = 'horusd'
+  a << fork {
+    Process.setsid
+    c = Horus.new
+    trap("USR1") { c.stop; exit; }
+    c.start
+    while true
+      sleep 1
+    end
+  }
+  a.concat(o)
+  writePids(a)
+  a.each do |pido| 
+    Process.detach(pido)
+  end
+end
+
+def stopClient
+  a = getPids
+  if not a
+    return false
+  end
+  a.each do |pido|
+    begin
+      Process.kill("USR1",pido.to_i)
+    rescue Errno::ECHILD => e
+      puts e.inspect
+    end
+  end
+  begin
+    File.delete('/var/run/horusd.pid')
+  rescue
+  end
+end
+
+case ARGV[0]
+  when "start"
+    startClient
+  when "stop"
+    stopClient
+  when "restart"
+    stopClient
+    sleep 10
+    startClient
+  else
+    puts "Usage: horusd <start|stop|restart>"
+end
+
+
